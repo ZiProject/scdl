@@ -1,118 +1,335 @@
 # @zibot/scdl
 
-@zibot/scdl là một module JavaScript hỗ trợ tải, tìm kiếm, và quản lý dữ liệu từ SoundCloud thông qua API. Module này cung cấp các
-phương thức tiện lợi để xử lý track, playlist, và tải nội dung.
+A tiny, promise-based Node.js client for searching SoundCloud, fetching track/playlist details, and downloading tracks as readable streams.
 
-## Cài đặt
+* **Search** tracks, playlists, and users
+* **Inspect** rich metadata for tracks and playlists
+* **Download** a track stream (high/low quality)
+* **Discover** related tracks by URL or ID
 
-Bạn có thể cài đặt module này bằng npm hoặc yarn:
+> ⚠️ Respect SoundCloud’s Terms of Service and creator rights. This library is for personal/educational use; don’t redistribute copyrighted content without permission.
+
+---
+
+## Installation
 
 ```bash
-npm install @zibot/scdl
-```
-
-hoặc
-
-```bash
+npm i @zibot/scdl
+# or
 yarn add @zibot/scdl
+# or
+pnpm add @zibot/scdl
 ```
 
-## Sử dụng
+**Runtime:** Node.js 18+ is recommended (built-in `fetch`/WHATWG streams). Works with ESM or CommonJS.
 
-### Khởi tạo
+---
 
-Đầu tiên, bạn cần khởi tạo lớp `SoundCloud` để sử dụng các chức năng của module:
+## Quick Start
 
-```javascript
-const { SoundCloud } = require("@zibot/scdl");
+### ESM
+
+```ts
+import SoundCloud from "@zibot/scdl";
+
+const sc = new SoundCloud({ init: true }); // auto-initialize clientId
 
 (async () => {
-	const scdl = new SoundCloud({ init: true }); // Tự động lấy client ID
-	await scdl.init(); // Đảm bảo client ID được khởi tạo
+  // Search tracks
+  const results = await sc.searchTracks({ query: "lofi hip hop", limit: 5, type: "tracks" });
+  console.log(results);
+
+  // Track details
+  const track = await sc.getTrackDetails("https://soundcloud.com/user/track-slug");
+  console.log(track.title, track.user.username);
+
+  // Download a track (Readable stream)
+  const stream = await sc.downloadTrack("https://soundcloud.com/user/track-slug", { quality: "high" });
+  stream.pipe(process.stdout); // or pipe to fs.createWriteStream("track.mp3")
+
+  // Related tracks
+  const related = await sc.getRelatedTracks(track.id, { limit: 10 });
+  console.log(related.map(t => t.title));
+})();
+```
+
+### CommonJS
+
+```js
+const SoundCloud = require("@zibot/scdl");
+const fs = require("node:fs");
+
+const sc = new SoundCloud({ init: true });
+
+(async () => {
+  const stream = await sc.downloadTrack("https://soundcloud.com/user/track-slug");
+  stream.pipe(fs.createWriteStream("track.mp3"));
 })();
 ```
 
 ---
 
-### Các phương thức
+## Initialization
 
-#### **`searchTracks(options)`**
+The client can retrieve a valid `clientId` automatically.
 
-Tìm kiếm các track trên SoundCloud.
+```ts
+// Option A: auto-init (recommended)
+const sc = new SoundCloud({ init: true });
 
-```javascript
-const tracks = await scdl.searchTracks({ query: "chill", limit: 5 });
-console.log(tracks);
+// Option B: manual init
+const sc = new SoundCloud();
+await sc.init(); // retrieves clientId
 ```
 
-**Tham số:**
-
-- `query` (bắt buộc): Từ khóa để tìm kiếm.
-- `limit` (mặc định: `20`): Số lượng track tối đa.
-- `offset` (mặc định: `0`): Vị trí bắt đầu.
+> You usually only need to call `init()` once per process. If you get authentication errors later, re-calling `init()` may refresh the client ID.
 
 ---
 
-#### **`getTrack(url)`**
+## API
 
-Lấy thông tin chi tiết về một track.
+### `new SoundCloud(options?)`
 
-```javascript
-const track = await scdl.getTrack("https://soundcloud.com/user/song");
-console.log(track);
+Create a client.
+
+* `options.init?: boolean` – if `true`, calls `init()` internally.
+
+**Properties**
+
+* `clientId: string | null` – resolved after `init()`
+* `apiBaseUrl: string` – internal base URL used for API calls
+
+---
+
+### `init(): Promise<void>`
+
+Initialize the client (retrieve `clientId`). Call this if you didn’t pass `{ init: true }`.
+
+---
+
+### `searchTracks(options: SearchOptions): Promise<(Track | Playlist | User)[]>`
+
+Search SoundCloud.
+
+**Parameters – `SearchOptions`**
+
+* `query: string` – search text
+* `limit?: number` – default depends on endpoint (commonly 10–20)
+* `offset?: number` – for pagination
+* `type?: "all" | "tracks" | "playlists" | "users"` – filter result kinds (default `"all"`)
+
+**Usage**
+
+```ts
+// Top tracks
+const tracks = await sc.searchTracks({ query: "ambient study", type: "tracks", limit: 10 });
+
+// Mixed kinds (tracks/playlists/users)
+const mixed = await sc.searchTracks({ query: "chill", type: "all", limit: 5, offset: 5 });
 ```
 
-**Tham số:**
-
-- `url` (bắt buộc): URL của track.
-
 ---
 
-#### **`getPlaylist(url)`**
+### `getTrackDetails(url: string): Promise<Track>`
 
-Lấy thông tin chi tiết về một playlist.
+Get rich metadata for a single track by its public URL.
 
-```javascript
-const playlist = await scdl.getPlaylist("https://soundcloud.com/user/playlist");
-console.log(playlist);
+```ts
+const t = await sc.getTrackDetails("https://soundcloud.com/artist/track");
+console.log({
+  id: t.id,
+  title: t.title,
+  by: t.user.username,
+  streamables: t.media.transcodings.length,
+});
 ```
 
-**Tham số:**
+**`Track`**
 
-- `url` (bắt buộc): URL của playlist.
-
----
-
-#### **`downloadTrack(url, options)`**
-
-Tải một track từ SoundCloud.
-
-```javascript
-const stream = await scdl.downloadTrack("https://soundcloud.com/user/song");
-stream.pipe(fs.createWriteStream("track.mp3"));
+```ts
+interface Track {
+  id: number;
+  title: string;
+  url: string;
+  user: { id: number; username: string };
+  media: {
+    transcodings: {
+      url: string;
+      format: { protocol: string; mime_type: string };
+    }[];
+  };
+}
 ```
 
-**Tham số:**
+---
 
-- `url` (bắt buộc): URL của track.
-- `options` (tùy chọn): Cấu hình tải xuống.
+### `getPlaylistDetails(url: string): Promise<Playlist>`
+
+Fetch playlist metadata and contained tracks.
+
+```ts
+const pl = await sc.getPlaylistDetails("https://soundcloud.com/artist/sets/playlist-slug");
+console.log(pl.title, pl.tracks.length);
+```
+
+**`Playlist`**
+
+```ts
+interface Playlist {
+  id: number;
+  title: string;
+  tracks: Track[];
+}
+```
 
 ---
 
-### Lưu ý
+### `downloadTrack(url: string, options?: DownloadOptions): Promise<Readable>`
 
-- Trước khi sử dụng các phương thức như `searchTracks`, `getTrack`, hoặc `downloadTrack`, cần đảm bảo rằng phương thức `init()` đã
-  hoàn thành để lấy `clientId`.
-- Nếu `clientId` không được khởi tạo, các phương thức này sẽ ném lỗi.
+Download a track as a Node `Readable` stream.
+
+**Parameters – `DownloadOptions`**
+
+* `quality?: "high" | "low"` – choose available transcoding (default implementation prefers higher quality when available)
+
+**Examples**
+
+```ts
+import fs from "node:fs";
+
+const read = await sc.downloadTrack("https://soundcloud.com/user/track", { quality: "high" });
+await new Promise((resolve, reject) => {
+  read.pipe(fs.createWriteStream("track.mp3"))
+    .on("finish", resolve)
+    .on("error", reject);
+});
+```
+
+Pipe to any writable destination (stdout, HTTP response, cloud storage SDKs, etc.).
 
 ---
 
-## Đóng góp
+### `getRelatedTracks(track: string | number, opts?: { limit?: number; offset?: number }): Promise<Track[]>`
 
-Nếu bạn muốn đóng góp cho dự án này, vui lòng tạo một pull request hoặc mở một issue trên GitHub.
+Fetch tracks related to a given track by **URL** or **numeric ID**.
+
+```ts
+// by URL
+const relByUrl = await sc.getRelatedTracks("https://soundcloud.com/artist/track", { limit: 6 });
+
+// by ID
+const base = await sc.getTrackDetails("https://soundcloud.com/artist/track");
+const relById = await sc.getRelatedTracks(base.id, { limit: 6 });
+```
 
 ---
 
-## Giấy phép
+## Types
 
-Dự án này được cấp phép theo giấy phép MIT. Xem file [LICENSE](LICENSE) để biết thêm chi tiết.
+```ts
+export interface SearchOptions {
+  query: string;
+  limit?: number;
+  offset?: number;
+  type?: "all" | "tracks" | "playlists" | "users";
+}
+
+export interface DownloadOptions {
+  quality?: "high" | "low";
+}
+
+export interface User {
+  id: number;
+  username: string;
+  followers_count: number;
+  track_count: number;
+}
+```
+
+These types are exported for TypeScript consumers.
+
+---
+
+## Examples
+
+### Save the highest-quality stream to disk
+
+```ts
+import fs from "node:fs";
+import SoundCloud from "@zibot/scdl";
+
+const sc = new SoundCloud({ init: true });
+
+async function save(url: string, file: string) {
+  const stream = await sc.downloadTrack(url, { quality: "high" });
+  await new Promise<void>((resolve, reject) => {
+    stream.pipe(fs.createWriteStream(file))
+      .on("finish", resolve)
+      .on("error", reject);
+  });
+}
+
+save("https://soundcloud.com/user/track", "output.mp3");
+```
+
+### Basic search → pick first result → download
+
+```ts
+const [first] = await sc.searchTracks({ query: "deep house 2024", type: "tracks", limit: 1 });
+if (first && "url" in first) {
+  const s = await sc.downloadTrack(first.url);
+  s.pipe(process.stdout);
+}
+```
+
+### Paginate results
+
+```ts
+const page1 = await sc.searchTracks({ query: "vaporwave", type: "tracks", limit: 20, offset: 0 });
+const page2 = await sc.searchTracks({ query: "vaporwave", type: "tracks", limit: 20, offset: 20 });
+```
+
+---
+
+## Error Handling & Tips
+
+* **Initialization:** If a method throws due to missing/expired `clientId`, call `await sc.init()` and retry.
+* **Quality selection:** Not all tracks expose multiple transcodings; the library will fall back when needed.
+* **Rate limits / 429:** Back off and retry with an exponential strategy.
+* **Private/geo-restricted tracks:** Details/downloads may be unavailable.
+* **Networking:** Wrap downloads with proper error and close handlers to avoid dangling file descriptors.
+
+---
+
+## FAQ
+
+**Q: Can I use this in the browser?**
+This package targets Node.js (it returns Node `Readable`). Browser use is not supported.
+
+**Q: What audio format do I get?**
+Whatever the selected transcoding provides (commonly progressive MP3 or HLS AAC). You may need to remux/encode if you require a specific container/codec.
+
+**Q: Do I need my own client ID?**
+The client auto-discovers a valid `clientId`. If discovery fails due to upstream changes, update the package to the latest version.
+
+---
+
+## Contributing
+
+PRs and issues are welcome! Please include:
+
+* A clear description of the change
+* Repro steps (for bugs)
+* Tests where possible
+
+---
+
+## License
+
+MIT © Zibot
+
+---
+
+## Disclaimer
+
+This project is not affiliated with SoundCloud. Use responsibly and comply with all applicable laws and SoundCloud’s Terms of Service.

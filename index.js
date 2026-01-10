@@ -68,6 +68,7 @@ class SoundCloud {
 
 		const regexes = [
 			/client_id=([a-zA-Z0-9]{32})/g, // client_id=XXXXXXXX...
+			/client_id:"([a-zA-Z0-9]{32})"/, // "client_id":"XXXXXXXX..."
 			/"client_id"\s*:\s*"([a-zA-Z0-9]{32})"/g, // "client_id":"XXXXXXXX..."
 		];
 

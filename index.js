@@ -124,7 +124,7 @@ class SoundCloud {
 		return this.clientId;
 	}
 
-	async searchTracks({ query, limit = 30, offset = 0, type = "all" }) {
+	async search({ query, limit = 30, offset = 0, type = "all" }) {
 		await this.ensureReady();
 		const path = type === "all" ? "" : `/${type}`;
 		const url =

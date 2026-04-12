@@ -1,13 +1,15 @@
 # @zibot/scdl
 
-A tiny, promise-based Node.js client for searching SoundCloud, fetching track/playlist details, and downloading tracks as readable streams.
+A tiny, promise-based Node.js client for searching SoundCloud, fetching track/playlist details, and downloading tracks as readable
+streams.
 
-* **Search** tracks, playlists, and users
-* **Inspect** rich metadata for tracks and playlists
-* **Download** a track stream (high/low quality)
-* **Discover** related tracks by URL or ID
+- **Search** tracks, playlists, and users
+- **Inspect** rich metadata for tracks and playlists
+- **Download** a track stream (high/low quality)
+- **Discover** related tracks by URL or ID
 
-> ⚠️ Respect SoundCloud’s Terms of Service and creator rights. This library is for personal/educational use; don’t redistribute copyrighted content without permission.
+> ⚠️ Respect SoundCloud’s Terms of Service and creator rights. This library is for personal/educational use; don’t redistribute
+> copyrighted content without permission.
 
 ---
 
@@ -35,21 +37,21 @@ import SoundCloud from "@zibot/scdl";
 const sc = new SoundCloud({ init: true }); // auto-initialize clientId
 
 (async () => {
-  // Search tracks
-  const results = await sc.searchTracks({ query: "lofi hip hop", limit: 5, type: "tracks" });
-  console.log(results);
+	// Search tracks
+	const results = await sc.search({ query: "lofi hip hop", limit: 5, type: "tracks" });
+	console.log(results);
 
-  // Track details
-  const track = await sc.getTrackDetails("https://soundcloud.com/user/track-slug");
-  console.log(track.title, track.user.username);
+	// Track details
+	const track = await sc.getTrackDetails("https://soundcloud.com/user/track-slug");
+	console.log(track.title, track.user.username);
 
-  // Download a track (Readable stream)
-  const stream = await sc.downloadTrack("https://soundcloud.com/user/track-slug", { quality: "high" });
-  stream.pipe(process.stdout); // or pipe to fs.createWriteStream("track.mp3")
+	// Download a track (Readable stream)
+	const stream = await sc.downloadTrack("https://soundcloud.com/user/track-slug", { quality: "high" });
+	stream.pipe(process.stdout); // or pipe to fs.createWriteStream("track.mp3")
 
-  // Related tracks
-  const related = await sc.getRelatedTracks(track.id, { limit: 10 });
-  console.log(related.map(t => t.title));
+	// Related tracks
+	const related = await sc.getRelatedTracks(track.id, { limit: 10 });
+	console.log(related.map((t) => t.title));
 })();
 ```
 
@@ -62,8 +64,8 @@ const fs = require("node:fs");
 const sc = new SoundCloud({ init: true });
 
 (async () => {
-  const stream = await sc.downloadTrack("https://soundcloud.com/user/track-slug");
-  stream.pipe(fs.createWriteStream("track.mp3"));
+	const stream = await sc.downloadTrack("https://soundcloud.com/user/track-slug");
+	stream.pipe(fs.createWriteStream("track.mp3"));
 })();
 ```
 
@@ -82,7 +84,8 @@ const sc = new SoundCloud();
 await sc.init(); // retrieves clientId
 ```
 
-> You usually only need to call `init()` once per process. If you get authentication errors later, re-calling `init()` may refresh the client ID.
+> You usually only need to call `init()` once per process. If you get authentication errors later, re-calling `init()` may refresh
+> the client ID.
 
 ---
 
@@ -92,12 +95,12 @@ await sc.init(); // retrieves clientId
 
 Create a client.
 
-* `options.init?: boolean` – if `true`, calls `init()` internally.
+- `options.init?: boolean` – if `true`, calls `init()` internally.
 
 **Properties**
 
-* `clientId: string | null` – resolved after `init()`
-* `apiBaseUrl: string` – internal base URL used for API calls
+- `clientId: string | null` – resolved after `init()`
+- `apiBaseUrl: string` – internal base URL used for API calls
 
 ---
 
@@ -107,25 +110,25 @@ Initialize the client (retrieve `clientId`). Call this if you didn’t pass `{ i
 
 ---
 
-### `searchTracks(options: SearchOptions): Promise<(Track | Playlist | User)[]>`
+### `search(options: SearchOptions): Promise<(Track | Playlist | User)[]>`
 
 Search SoundCloud.
 
 **Parameters – `SearchOptions`**
 
-* `query: string` – search text
-* `limit?: number` – default depends on endpoint (commonly 10–20)
-* `offset?: number` – for pagination
-* `type?: "all" | "tracks" | "playlists" | "users"` – filter result kinds (default `"all"`)
+- `query: string` – search text
+- `limit?: number` – default depends on endpoint (commonly 10–20)
+- `offset?: number` – for pagination
+- `type?: "all" | "tracks" | "playlists" | "users"` – filter result kinds (default `"all"`)
 
 **Usage**
 
 ```ts
 // Top tracks
-const tracks = await sc.searchTracks({ query: "ambient study", type: "tracks", limit: 10 });
+const tracks = await sc.search({ query: "ambient study", type: "tracks", limit: 10 });
 
 // Mixed kinds (tracks/playlists/users)
-const mixed = await sc.searchTracks({ query: "chill", type: "all", limit: 5, offset: 5 });
+const mixed = await sc.search({ query: "chill", type: "all", limit: 5, offset: 5 });
 ```
 
 ---
@@ -137,28 +140,10 @@ Get rich metadata for a single track by its public URL.
 ```ts
 const t = await sc.getTrackDetails("https://soundcloud.com/artist/track");
 console.log({
-  id: t.id,
-  title: t.title,
-  by: t.user.username,
-  streamables: t.media.transcodings.length,
+	id: t.id,
+	title: t.title,
+	url: t.permalink_url,
 });
-```
-
-**`Track`**
-
-```ts
-interface Track {
-  id: number;
-  title: string;
-  url: string;
-  user: { id: number; username: string };
-  media: {
-    transcodings: {
-      url: string;
-      format: { protocol: string; mime_type: string };
-    }[];
-  };
-}
 ```
 
 ---
@@ -172,16 +157,6 @@ const pl = await sc.getPlaylistDetails("https://soundcloud.com/artist/sets/playl
 console.log(pl.title, pl.tracks.length);
 ```
 
-**`Playlist`**
-
-```ts
-interface Playlist {
-  id: number;
-  title: string;
-  tracks: Track[];
-}
-```
-
 ---
 
 ### `downloadTrack(url: string, options?: DownloadOptions): Promise<Readable>`
@@ -190,7 +165,7 @@ Download a track as a Node `Readable` stream.
 
 **Parameters – `DownloadOptions`**
 
-* `quality?: "high" | "low"` – choose available transcoding (default implementation prefers higher quality when available)
+- `quality?: "high" | "low"` – choose available transcoding (default implementation prefers higher quality when available)
 
 **Examples**
 
@@ -199,9 +174,7 @@ import fs from "node:fs";
 
 const read = await sc.downloadTrack("https://soundcloud.com/user/track", { quality: "high" });
 await new Promise((resolve, reject) => {
-  read.pipe(fs.createWriteStream("track.mp3"))
-    .on("finish", resolve)
-    .on("error", reject);
+	read.pipe(fs.createWriteStream("track.ts")).on("finish", resolve).on("error", reject);
 });
 ```
 
@@ -228,21 +201,21 @@ const relById = await sc.getRelatedTracks(base.id, { limit: 6 });
 
 ```ts
 export interface SearchOptions {
-  query: string;
-  limit?: number;
-  offset?: number;
-  type?: "all" | "tracks" | "playlists" | "users";
+	query: string;
+	limit?: number;
+	offset?: number;
+	type?: "all" | "tracks" | "playlists" | "users";
 }
 
 export interface DownloadOptions {
-  quality?: "high" | "low";
+	quality?: "high" | "low";
 }
 
 export interface User {
-  id: number;
-  username: string;
-  followers_count: number;
-  track_count: number;
+	id: number;
+	username: string;
+	followers_count: number;
+	track_count: number;
 }
 ```
 
@@ -261,56 +234,53 @@ import SoundCloud from "@zibot/scdl";
 const sc = new SoundCloud({ init: true });
 
 async function save(url: string, file: string) {
-  const stream = await sc.downloadTrack(url, { quality: "high" });
-  await new Promise<void>((resolve, reject) => {
-    stream.pipe(fs.createWriteStream(file))
-      .on("finish", resolve)
-      .on("error", reject);
-  });
+	const stream = await sc.downloadTrack(url, { quality: "high" });
+	await new Promise<void>((resolve, reject) => {
+		stream.pipe(fs.createWriteStream(file)).on("finish", resolve).on("error", reject);
+	});
 }
 
-save("https://soundcloud.com/user/track", "output.mp3");
+save("https://soundcloud.com/user/track", "output.ts");
 ```
 
 ### Basic search → pick first result → download
 
 ```ts
-const [first] = await sc.searchTracks({ query: "deep house 2024", type: "tracks", limit: 1 });
+const [first] = await sc.search({ query: "deep house 2024", type: "tracks", limit: 1 });
 if (first && "url" in first) {
-  const s = await sc.downloadTrack(first.url);
-  s.pipe(process.stdout);
+	const s = await sc.downloadTrack(first.url);
+	s.pipe(process.stdout);
 }
 ```
 
 ### Paginate results
 
 ```ts
-const page1 = await sc.searchTracks({ query: "vaporwave", type: "tracks", limit: 20, offset: 0 });
-const page2 = await sc.searchTracks({ query: "vaporwave", type: "tracks", limit: 20, offset: 20 });
+const page1 = await sc.search({ query: "vaporwave", type: "tracks", limit: 20, offset: 0 });
+const page2 = await sc.search({ query: "vaporwave", type: "tracks", limit: 20, offset: 20 });
 ```
 
 ---
 
 ## Error Handling & Tips
 
-* **Initialization:** If a method throws due to missing/expired `clientId`, call `await sc.init()` and retry.
-* **Quality selection:** Not all tracks expose multiple transcodings; the library will fall back when needed.
-* **Rate limits / 429:** Back off and retry with an exponential strategy.
-* **Private/geo-restricted tracks:** Details/downloads may be unavailable.
-* **Networking:** Wrap downloads with proper error and close handlers to avoid dangling file descriptors.
+- **Initialization:** If a method throws due to missing/expired `clientId`, call `await sc.init()` and retry.
+- **Quality selection:** Not all tracks expose multiple transcodings; the library will fall back when needed.
+- **Rate limits / 429:** Back off and retry with an exponential strategy.
+- **Private/geo-restricted tracks:** Details/downloads may be unavailable.
+- **Networking:** Wrap downloads with proper error and close handlers to avoid dangling file descriptors.
 
 ---
 
 ## FAQ
 
-**Q: Can I use this in the browser?**
-This package targets Node.js (it returns Node `Readable`). Browser use is not supported.
+**Q: Can I use this in the browser?** This package targets Node.js (it returns Node `Readable`). Browser use is not supported.
 
-**Q: What audio format do I get?**
-Whatever the selected transcoding provides (commonly progressive MP3 or HLS AAC). You may need to remux/encode if you require a specific container/codec.
+**Q: What audio format do I get?** Whatever the selected transcoding provides (commonly progressive MP3 or HLS AAC). You may need
+to remux/encode if you require a specific container/codec.
 
-**Q: Do I need my own client ID?**
-The client auto-discovers a valid `clientId`. If discovery fails due to upstream changes, update the package to the latest version.
+**Q: Do I need my own client ID?** The client auto-discovers a valid `clientId`. If discovery fails due to upstream changes,
+update the package to the latest version.
 
 ---
 
@@ -318,9 +288,9 @@ The client auto-discovers a valid `clientId`. If discovery fails due to upstream
 
 PRs and issues are welcome! Please include:
 
-* A clear description of the change
-* Repro steps (for bugs)
-* Tests where possible
+- A clear description of the change
+- Repro steps (for bugs)
+- Tests where possible
 
 ---
 
@@ -332,4 +302,5 @@ MIT © Zibot
 
 ## Disclaimer
 
-This project is not affiliated with SoundCloud. Use responsibly and comply with all applicable laws and SoundCloud’s Terms of Service.
+This project is not affiliated with SoundCloud. Use responsibly and comply with all applicable laws and SoundCloud’s Terms of
+Service.

@@ -2,7 +2,6 @@
 
 const axios = require("axios");
 const m3u8stream = require("m3u8stream");
-
 class SoundCloud {
 	/**
 	 * @param {Object} options
@@ -165,15 +164,13 @@ class SoundCloud {
 		}
 		return playlist;
 	}
-
-	async downloadTrack(trackOrPlaylistUrl, options = {}) {
+	async downloadTrack(trackOrPlaylistUrl, options = { seek: 0 }) {
 		await this.ensureReady();
 		try {
 			let item = await this.fetchItem(trackOrPlaylistUrl);
 
 			let track;
 			if (item.kind === "playlist") {
-				console.log(`[SoundCloud] Đã nhận diện link Set/Playlist: ${item.title}`);
 				if (!item.tracks || item.tracks.length === 0) {
 					throw new Error("Playlist này không có bài hát nào.");
 				}
@@ -195,10 +192,25 @@ class SoundCloud {
 			const transcodings = this._getSortedTranscodings(track);
 			if (!transcodings.length) throw new Error("Không tìm thấy stream phù hợp cho bài này.");
 
-			for (const transcoding of transcodings) {
+			let sortedTranscodings = [...transcodings];
+			if (options?.seek > 0) {
+				sortedTranscodings.sort((a, b) => {
+					const aProto = a?.format?.protocol;
+					const bProto = b?.format?.protocol;
+					if (aProto === "progressive" && bProto === "hls") return -1;
+					if (aProto === "hls" && bProto === "progressive") return 1;
+					return 0;
+				});
+			}
+
+			for (const transcoding of sortedTranscodings) {
 				try {
 					const streamUrl = await this.getStreamUrl(transcoding.url);
+
 					if (transcoding.format?.protocol === "hls") {
+						if (options?.seek > 0) {
+							continue;
+						}
 						return m3u8stream(streamUrl, {
 							requestOptions: {
 								headers: {
@@ -209,11 +221,22 @@ class SoundCloud {
 							...options,
 						});
 					} else {
-						const res = await this.http.get(streamUrl, { responseType: "stream" });
+						const bitrate = 128000;
+						const startByte = Math.floor((options?.seek / 1000) * (bitrate / 8));
+
+						const headers = {};
+						if (options?.seek > 0) {
+							headers.Range = `bytes=${startByte}-`;
+						}
+
+						const res = await this.http.get(streamUrl, {
+							responseType: "stream",
+							headers: headers,
+						});
 						return res.data;
 					}
 				} catch (err) {
-					continue; // Thử định dạng tiếp theo nếu định dạng này lỗi
+					continue;
 				}
 			}
 			throw new Error("Không thể khởi tạo luồng tải cho tất cả định dạng.");

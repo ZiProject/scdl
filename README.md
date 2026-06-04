@@ -46,7 +46,7 @@ const sc = new SoundCloud({ init: true }); // auto-initialize clientId
 	console.log(track.title, track.user.username);
 
 	// Download a track (Readable stream)
-	const stream = await sc.downloadTrack("https://soundcloud.com/user/track-slug", { quality: "high" });
+	const stream = await sc.downloadTrack("https://soundcloud.com/user/track-slug", { quality: "high", seek: 5000 });
 	stream.pipe(process.stdout); // or pipe to fs.createWriteStream("track.mp3")
 
 	// Related tracks

@@ -10,6 +10,7 @@ export interface SearchOptions {
 
 export interface DownloadOptions {
 	quality?: "high" | "low";
+	seek?: number; // (milliseconds)
 }
 
 export interface Track {
@@ -204,7 +205,6 @@ declare class SoundCloud {
 	 * Download a track as a stream.
 	 */
 	downloadTrack(url: string, options?: DownloadOptions): Promise<Readable>;
-
 	/**
 	 * Get related tracks for a given track (by URL or ID).
 	 */

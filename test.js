@@ -22,7 +22,7 @@ const sc = new SoundCloud();
 			return;
 		}
 
-		const filename = "track.ts"; // HLS thường là định dạng MPEG-TS
+		const filename = "temp/track.mp4"; // tmp4
 		const writeStream = fs.createWriteStream(filename);
 
 		console.log("Đang tải dữ liệu...");

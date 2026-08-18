@@ -172,7 +172,7 @@ class SoundCloud {
 			let track;
 			if (item.kind === "playlist") {
 				if (!item.tracks || item.tracks.length === 0) {
-					throw new Error("Playlist này không có bài hát nào.");
+					throw new Error("This playlist contains no songs.");
 				}
 				track = item.tracks[0];
 
@@ -182,15 +182,15 @@ class SoundCloud {
 			} else if (item.kind === "track") {
 				track = item;
 			} else {
-				throw new Error("URL không phải là bài hát hoặc playlist hợp lệ.");
+				throw new Error("The URL is not a valid song or playlist.");
 			}
 
 			if (track?.policy === "BLOCK" || track?.state === "blocked") {
-				throw new Error(`Bài hát "${track.title}" bị chặn.`);
+				throw new Error(`Song "${track.title}" blocked.`);
 			}
 
 			const transcodings = this._getSortedTranscodings(track);
-			if (!transcodings.length) throw new Error("Không tìm thấy stream phù hợp cho bài này.");
+			if (!transcodings.length) throw new Error("No suitable stream found for this song.");
 
 			let sortedTranscodings = [...transcodings];
 			if (options?.seek > 0) {
@@ -239,7 +239,7 @@ class SoundCloud {
 					continue;
 				}
 			}
-			throw new Error("Không thể khởi tạo luồng tải cho tất cả định dạng.");
+			throw new Error("It is not possible to initialize the load stream for all formats..");
 		} catch (e) {
 			console.error("Failed to download:", e?.message || e);
 			return null;

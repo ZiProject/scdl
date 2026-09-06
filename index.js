@@ -204,7 +204,6 @@ class SoundCloud {
 							signal: options?.signal,
 							track,
 						});
-					} else {
 					}
 
 					if (transcoding.format?.protocol === "progressive") {

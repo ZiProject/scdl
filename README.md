@@ -172,7 +172,8 @@ Download a track as a Node `Readable` stream.
 ```ts
 import fs from "node:fs";
 
-const read = await sc.downloadTrack("https://soundcloud.com/user/track", { quality: "high" });
+const read = await sc.downloadTrack("https://soundcloud.com/user/track", { quality: "high", seek: 720050 });
+console.log(read.metadata); // get metadata track
 await new Promise((resolve, reject) => {
 	read.pipe(fs.createWriteStream("track.ts")).on("finish", resolve).on("error", reject);
 });

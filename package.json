@@ -1,6 +1,6 @@
 {
 	"name": "@zibot/scdl",
-	"version": "0.1.5",
+	"version": "0.1.6",
 	"description": "Soucloud download",
 	"main": "index.js",
 	"types": "index.d.ts",
@@ -25,8 +25,7 @@
 	},
 	"homepage": "https://github.com/ZiProject/scdl#readme",
 	"dependencies": {
-		"axios": "^1.15.0",
-		"events": "^3.3.0",
-		"m3u8stream": "^0.8.6"
+		"axios": "^1.20.0",
+		"events": "^3.3.0"
 	}
 }

@@ -14,15 +14,18 @@ const sc = new SoundCloud();
 		// console.log("Các bài hát liên quan:", getRelatedTracks);
 		// 	console.log("Đang khởi tạo và lấy stream...");
 		const url = "https://soundcloud.com/nguy-n-th-th-y-linh-812081700/gime-gime-gime-remix-dj-viet-anh";
-
-		const stream = await sc.downloadTrack(url, { seek: 120000 }); // Tìm kiếm từ 2 phút (120000 ms)
-
+		// console.log(await sc.getTrackDetails(url));
+		const stream = await sc.downloadTrack(url, {
+			seek: 720050,
+			// Tìm kiếm từ 12 phút (720000 ms)
+		});
+		console.log(stream.metadata);
 		if (!stream) {
 			console.error("Không lấy được stream.");
 			return;
 		}
 
-		const filename = "temp/track.mp4"; // tmp4
+		const filename = "temp/track.mp3";
 		const writeStream = fs.createWriteStream(filename);
 
 		console.log("Đang tải dữ liệu...");

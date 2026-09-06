@@ -1,7 +1,6 @@
 "use strict";
 
 const axios = require("axios");
-const m3u8stream = require("m3u8stream");
 class SoundCloud {
 	/**
 	 * @param {Object} options
@@ -153,15 +152,17 @@ class SoundCloud {
 		if (playlist?.kind !== "playlist") throw new Error("Invalid playlist URL");
 
 		const tracks = Array.isArray(playlist.tracks) ? playlist.tracks : [];
-		const loaded = tracks.filter((t) => t?.title);
 		const unloadedIds = tracks.filter((t) => !t?.title && t?.id).map((t) => t.id);
 
+		let fetchedById = new Map();
 		if (unloadedIds.length) {
 			const more = await this.fetchTracksByIds(unloadedIds);
-			playlist.tracks = loaded.concat(more);
-		} else {
-			playlist.tracks = loaded;
+			fetchedById = new Map(more.filter((t) => t?.id).map((t) => [t.id, t]));
 		}
+
+		// Giữ nguyên thứ tự gốc của playlist, chỉ thay các track "rỗng" bằng
+		// bản đầy đủ vừa fetch; bỏ qua những track không fetch được.
+		playlist.tracks = tracks.map((t) => (t?.title ? t : fetchedById.get(t?.id) || null)).filter(Boolean);
 		return playlist;
 	}
 	async downloadTrack(trackOrPlaylistUrl, options = { seek: 0 }) {
@@ -177,7 +178,7 @@ class SoundCloud {
 				track = item.tracks[0];
 
 				if (!track.media) {
-					track = await this.getTrackDetails(track.permalink_url || track.id);
+					track = track.permalink_url ? await this.getTrackDetails(track.permalink_url) : await this.fetchTrackById(track.id);
 				}
 			} else if (item.kind === "track") {
 				track = item;
@@ -192,56 +193,57 @@ class SoundCloud {
 			const transcodings = this._getSortedTranscodings(track);
 			if (!transcodings.length) throw new Error("No suitable stream found for this song.");
 
-			let sortedTranscodings = [...transcodings];
-			if (options?.seek > 0) {
-				sortedTranscodings.sort((a, b) => {
-					const aProto = a?.format?.protocol;
-					const bProto = b?.format?.protocol;
-					if (aProto === "progressive" && bProto === "hls") return -1;
-					if (aProto === "hls" && bProto === "progressive") return 1;
-					return 0;
-				});
-			}
+			const seekMs = Math.max(0, Number(options?.seek) || 0);
 
-			for (const transcoding of sortedTranscodings) {
+			for (const transcoding of transcodings) {
 				try {
 					const streamUrl = await this.getStreamUrl(transcoding.url);
 
 					if (transcoding.format?.protocol === "hls") {
-						if (options?.seek > 0) {
-							continue;
-						}
-						return m3u8stream(streamUrl, {
-							requestOptions: {
-								headers: {
-									"User-Agent": this.http.defaults.headers["User-Agent"],
-									Referer: "https://soundcloud.com/",
-								},
-							},
-							...options,
+						return this._createHlsStream(streamUrl, seekMs, {
+							signal: options?.signal,
+							track,
 						});
 					} else {
-						const bitrate = 128000;
-						const startByte = Math.floor((options?.seek / 1000) * (bitrate / 8));
+					}
 
+					if (transcoding.format?.protocol === "progressive") {
 						const headers = {};
-						if (options?.seek > 0) {
+
+						if (seekMs > 0) {
+							// Bitrate mặc định (fallback) nếu không xác định được kích thước file thực tế
+							let bitrate = 128000;
+							try {
+								const head = await this.http.head(streamUrl);
+								const contentLength = Number(head.headers?.["content-length"]);
+								const durationSec = (Number(track?.duration) || 0) / 1000;
+								if (contentLength > 0 && durationSec > 0) {
+									bitrate = (contentLength * 8) / durationSec;
+								}
+							} catch {
+								// Giữ bitrate mặc định nếu HEAD request thất bại
+							}
+
+							const startByte = Math.floor((seekMs / 1000) * (bitrate / 8));
 							headers.Range = `bytes=${startByte}-`;
 						}
 
 						const res = await this.http.get(streamUrl, {
 							responseType: "stream",
-							headers: headers,
+							headers,
 						});
+
 						return res.data;
 					}
 				} catch (err) {
 					continue;
 				}
 			}
-			throw new Error("It is not possible to initialize the load stream for all formats..");
+
+			throw new Error("It is not possible to initialize the load stream for all formats.");
 		} catch (e) {
 			console.error("Failed to download:", e?.message || e);
+
 			return null;
 		}
 	}
@@ -253,6 +255,17 @@ class SoundCloud {
 			return await this._getJson(url);
 		} catch (e) {
 			throw new Error("Failed to fetch item details");
+		}
+	}
+
+	async fetchTrackById(id) {
+		await this.ensureReady();
+		if (!id) throw new Error("Missing track id");
+		const url = `${this.apiBaseUrl}/tracks/${id}?client_id=${this.clientId}`;
+		try {
+			return await this._getJson(url);
+		} catch (e) {
+			throw new Error("Failed to fetch track by ID");
 		}
 	}
 
@@ -325,6 +338,493 @@ class SoundCloud {
 		return [...list].sort((a, b) => score(b) - score(a));
 	}
 
+	async _getHlsPlaylist(streamUrl) {
+		const headers = {
+			"User-Agent": this.http.defaults.headers["User-Agent"],
+			Referer: "https://soundcloud.com/",
+			Accept: "application/vnd.apple.mpegurl, application/x-mpegURL, */*",
+		};
+
+		const res = await this.http.get(streamUrl, {
+			responseType: "text",
+			headers,
+		});
+
+		const text = String(res.data || "");
+
+		if (!text.includes("#EXTM3U")) {
+			throw new Error("Invalid HLS playlist");
+		}
+
+		// This implementation expects a media playlist, not a master playlist.
+		if (text.includes("#EXT-X-STREAM-INF")) {
+			throw new Error("HLS master playlist is not supported");
+		}
+
+		const lines = text
+			.split(/\r?\n/)
+			.map((line) => line.trim())
+			.filter(Boolean);
+
+		let init = null;
+		const segments = [];
+
+		let currentTimeMs = 0;
+		let pendingDurationMs = null;
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+
+			/*
+			 * fMP4 initialization segment:
+			 *
+			 * #EXT-X-MAP:URI="init.mp4"
+			 *
+			 * Optional:
+			 *
+			 * #EXT-X-MAP:URI="init.mp4",BYTERANGE="1234@0"
+			 */
+			if (line.startsWith("#EXT-X-MAP:")) {
+				const attributes = line.slice("#EXT-X-MAP:".length);
+
+				const uriMatch = attributes.match(/(?:^|,)URI="([^"]+)"/i);
+
+				if (!uriMatch) {
+					throw new Error("HLS EXT-X-MAP has no URI");
+				}
+
+				const byteRangeMatch = attributes.match(/(?:^|,)BYTERANGE="([^"]+)"/i);
+
+				let range = null;
+
+				if (byteRangeMatch) {
+					const match = byteRangeMatch[1].match(/^(\d+)(?:@(\d+))?$/);
+
+					if (match) {
+						range = {
+							length: Number(match[1]),
+							offset: match[2] != null ? Number(match[2]) : 0,
+						};
+					}
+				}
+
+				init = {
+					url: new URL(uriMatch[1], streamUrl).toString(),
+					range,
+				};
+
+				continue;
+			}
+
+			/*
+			 * Segment duration:
+			 *
+			 * #EXTINF:5.013,
+			 */
+			if (line.startsWith("#EXTINF:")) {
+				const match = line.match(/^#EXTINF:\s*([\d.]+)/i);
+
+				if (match) {
+					pendingDurationMs = Number(match[1]) * 1000;
+				}
+
+				continue;
+			}
+
+			/*
+			 * Optional segment byte range:
+			 *
+			 * #EXT-X-BYTERANGE:12345@67890
+			 */
+			if (line.startsWith("#EXT-X-BYTERANGE:")) {
+				const value = line.slice("#EXT-X-BYTERANGE:".length).trim();
+
+				const match = value.match(/^(\d+)(?:@(\d+))?$/);
+
+				if (match && segments.length > 0) {
+					segments[segments.length - 1].range = {
+						length: Number(match[1]),
+						offset: match[2] != null ? Number(match[2]) : null,
+					};
+				}
+
+				continue;
+			}
+
+			/*
+			 * Ignore HLS tags.
+			 */
+			if (line.startsWith("#")) {
+				continue;
+			}
+
+			/*
+			 * This is the actual media segment URI.
+			 */
+			if (pendingDurationMs != null) {
+				segments.push({
+					url: new URL(line, streamUrl).toString(),
+					startMs: currentTimeMs,
+					durationMs: pendingDurationMs,
+					range: null,
+				});
+
+				currentTimeMs += pendingDurationMs;
+				pendingDurationMs = null;
+			}
+		}
+
+		if (!init) {
+			throw new Error("HLS playlist has no initialization segment");
+		}
+
+		if (!segments.length) {
+			throw new Error("HLS playlist has no media segments");
+		}
+
+		/*
+		 * Resolve implicit BYTERANGE offsets.
+		 *
+		 * BYTERANGE="length@offset"
+		 * can omit @offset, meaning the previous range ends
+		 * where this one starts.
+		 */
+		let previousEnd = 0;
+
+		for (const segment of segments) {
+			if (!segment.range) continue;
+
+			if (segment.range.offset == null) {
+				segment.range.offset = previousEnd;
+			}
+
+			previousEnd = segment.range.offset + segment.range.length;
+		}
+
+		return {
+			url: streamUrl,
+			init,
+			segments,
+			durationMs: currentTimeMs,
+		};
+	}
+	_findNearestHlsSegment(segments, seekMs = 0) {
+		if (!Array.isArray(segments) || segments.length === 0) {
+			throw new Error("No HLS segments available");
+		}
+
+		seekMs = Math.max(0, Number(seekMs) || 0);
+
+		/*
+		 * No seek -> first segment.
+		 */
+		if (seekMs <= 0) {
+			return 0;
+		}
+
+		/*
+		 * Find the segment containing the requested position.
+		 *
+		 * startMs <= seek < endMs
+		 */
+		for (let i = 0; i < segments.length; i++) {
+			const segment = segments[i];
+
+			const start = segment.startMs;
+			const end = start + segment.durationMs;
+
+			if (seekMs >= start && seekMs < end) {
+				return i;
+			}
+		}
+
+		/*
+		 * Seek is after the playlist.
+		 * Use the last available segment instead of failing.
+		 */
+		if (seekMs >= segments[segments.length - 1].startMs) {
+			return segments.length - 1;
+		}
+
+		/*
+		 * Fallback: closest segment by start time.
+		 */
+		let bestIndex = 0;
+		let bestDistance = Infinity;
+
+		for (let i = 0; i < segments.length; i++) {
+			const distance = Math.abs(segments[i].startMs - seekMs);
+
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				bestIndex = i;
+			}
+		}
+
+		return bestIndex;
+	}
+	async _createHlsStream(streamUrl, seekMs = 0, options = {}) {
+		const { PassThrough } = require("stream");
+
+		seekMs = Math.max(0, Number(seekMs) || 0);
+
+		const playlist = await this._getHlsPlaylist(streamUrl);
+		const startIndex = this._findNearestHlsSegment(playlist.segments, seekMs);
+
+		const startSegment = playlist.segments[startIndex];
+
+		const output = new PassThrough();
+
+		const trackDuration = Number(options?.track?.duration) || 0;
+		const fullDuration = Number(options?.track?.full_duration) || 0;
+
+		const duration = trackDuration || playlist.durationMs || 0;
+
+		const metadata = {
+			trackId: options?.track?.id ?? null,
+			title: options?.track?.title ?? null,
+
+			duration,
+			fullDuration,
+
+			seek: seekMs,
+
+			start: startSegment.startMs,
+
+			end: startSegment.startMs + startSegment.durationMs,
+
+			offset: startSegment.startMs - seekMs,
+
+			currentTime: startSegment.startMs,
+
+			segmentIndex: startIndex,
+
+			segmentStart: startSegment.startMs,
+
+			segmentEnd: startSegment.startMs + startSegment.durationMs,
+
+			segmentDuration: startSegment.durationMs,
+
+			playlistDuration: playlist.durationMs,
+
+			url: streamUrl,
+		};
+
+		/*
+		 * Keep metadata attached to the stream so existing
+		 * consumers can continue treating it as a Readable.
+		 */
+		output.metadata = metadata;
+
+		/*
+		 * Convenience property.
+		 */
+		Object.defineProperty(output, "currentTime", {
+			enumerable: true,
+
+			get() {
+				return metadata.currentTime;
+			},
+		});
+
+		/*
+		 * Return a snapshot instead of the mutable object.
+		 */
+		output.getMetadata = () => ({
+			...metadata,
+		});
+
+		const headers = {
+			"User-Agent": this.http.defaults.headers["User-Agent"],
+
+			Referer: "https://soundcloud.com/",
+		};
+
+		const abortController = new AbortController();
+
+		const cleanup = () => {
+			if (!abortController.signal.aborted) {
+				abortController.abort();
+			}
+		};
+
+		output.once("close", cleanup);
+		output.once("error", cleanup);
+
+		/*
+		 * External AbortSignal.
+		 */
+		if (options?.signal) {
+			if (options.signal.aborted) {
+				output.destroy(new Error("HLS stream aborted"));
+
+				return output;
+			}
+
+			const onAbort = () => {
+				output.destroy(new Error("HLS stream aborted"));
+			};
+
+			options.signal.addEventListener("abort", onAbort, { once: true });
+
+			output.once("close", () => {
+				options.signal.removeEventListener("abort", onAbort);
+			});
+		}
+
+		const requestBuffer = async (url, range = null) => {
+			const requestHeaders = {
+				...headers,
+			};
+
+			if (range) {
+				requestHeaders.Range = `bytes=${range.offset}-${range.offset + range.length - 1}`;
+			}
+
+			const res = await this.http.get(url, {
+				responseType: "arraybuffer",
+				headers: requestHeaders,
+				signal: abortController.signal,
+			});
+
+			return Buffer.from(res.data);
+		};
+
+		const writeBuffer = async (buffer) => {
+			if (output.destroyed || abortController.signal.aborted) {
+				throw new Error("HLS output stream destroyed");
+			}
+
+			if (output.write(buffer)) {
+				return;
+			}
+
+			await new Promise((resolve, reject) => {
+				const onDrain = () => {
+					cleanupListeners();
+					resolve();
+				};
+
+				const onClose = () => {
+					cleanupListeners();
+
+					reject(new Error("HLS output stream closed"));
+				};
+
+				const onError = (error) => {
+					cleanupListeners();
+					reject(error);
+				};
+
+				const cleanupListeners = () => {
+					output.removeListener("drain", onDrain);
+
+					output.removeListener("close", onClose);
+
+					output.removeListener("error", onError);
+				};
+
+				output.once("drain", onDrain);
+				output.once("close", onClose);
+				output.once("error", onError);
+			});
+		};
+
+		/*
+		 * Update timeline metadata.
+		 */
+		const updateSegmentMetadata = (segment, index) => {
+			const start = segment.startMs;
+			const end = segment.startMs + segment.durationMs;
+
+			metadata.currentTime = start;
+
+			metadata.segmentIndex = index;
+
+			metadata.segmentStart = start;
+
+			metadata.segmentEnd = end;
+
+			metadata.segmentDuration = segment.durationMs;
+
+			metadata.start = start;
+			metadata.end = end;
+			metadata.offset = start - metadata.seek;
+			/*
+			 * Custom event:
+			 *
+			 * stream.on("segment", info => ...)
+			 */
+			output.emit("segment", {
+				index,
+
+				start,
+
+				end,
+
+				duration: segment.durationMs,
+
+				currentTime: start,
+
+				offset: start - metadata.seek,
+
+				segment,
+			});
+		};
+
+		/*
+		 * Download asynchronously so caller immediately
+		 * receives the Readable.
+		 */
+		(async () => {
+			try {
+				/*
+				 * fMP4 requires the initialization segment
+				 * before the first media fragment.
+				 */
+				const initBuffer = await requestBuffer(playlist.init.url, playlist.init.range);
+
+				await writeBuffer(initBuffer);
+
+				/*
+				 * Stream from the nearest segment.
+				 */
+				for (let i = startIndex; i < playlist.segments.length; i++) {
+					if (abortController.signal.aborted || output.destroyed) {
+						break;
+					}
+
+					const segment = playlist.segments[i];
+
+					updateSegmentMetadata(segment, i);
+
+					const buffer = await requestBuffer(segment.url, segment.range);
+
+					await writeBuffer(buffer);
+				}
+
+				/*
+				 * Mark the stream at the end of the
+				 * last emitted segment.
+				 */
+				if (!output.destroyed && playlist.segments.length > 0) {
+					const last = playlist.segments[playlist.segments.length - 1];
+
+					metadata.currentTime = last.startMs + last.durationMs;
+
+					metadata.segmentEnd = metadata.currentTime;
+
+					output.end();
+				}
+			} catch (error) {
+				if (!output.destroyed) {
+					output.destroy(error);
+				}
+			}
+		})();
+
+		return output;
+	}
 	_pickBestTranscoding(track) {
 		return this._getSortedTranscodings(track)[0] || null;
 	}
